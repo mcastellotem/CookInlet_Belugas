@@ -1,0 +1,6 @@
+PytorchWildlife
+soundfile
+lightning
+omegaconf
+librosa
+torchinfo

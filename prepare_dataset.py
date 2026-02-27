@@ -8,7 +8,12 @@ Usage:
     # Run specific steps only
     python prepare_dataset.py --config data/data_config.yaml --steps stats windows
 
-    # Available steps: stats, windows, spectrograms, splits
+    # Available steps: stats, plot, windows, spectrograms, splits
+    # - stats: Display dataset statistics
+    # - plot: Create distribution plots (by dataset and splits)
+    # - windows: Build windows from annotations
+    # - spectrograms: Compute mel spectrograms
+    # - splits: Create train/val/test splits
 """
 
 import os
@@ -18,10 +23,261 @@ from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
 # Import from PytorchWildlife core library
 from PytorchWildlife.utils.bioacoustics_configs import load_config, DomainConfig
 from PytorchWildlife.data.bioacoustics_windows import build_windows, count_window_labels
+
+
+def run_plot_distribution(config: DomainConfig) -> None:
+    """Create pie charts showing class distribution by dataset."""
+    print(f"\n{'='*60}")
+    print(f"Step: Plot Class Distribution")
+    print(f"{'='*60}")
+
+    # Load windows
+    windows_path = os.path.join(config.paths.data_root, config.paths.windows_file)
+    if not os.path.exists(windows_path):
+        print(f"Error: Windows file not found: {windows_path}")
+        print("Run 'windows' step first.")
+        return
+
+    with open(windows_path, 'r') as f:
+        windows = json.load(f)
+
+    print(f"Loaded {len(windows)} windows")
+
+    # Convert to DataFrame for easier grouping
+    df = pd.DataFrame(windows)
+
+    # Get datasets
+    datasets = sorted(df['dataset'].unique())
+    print(f"Datasets: {datasets}")
+
+    # Load class names from config
+    class_names = config.class_names
+
+    # Count total distribution
+    total_counts = df['label'].value_counts().sort_index().to_dict()
+
+    # Count per dataset
+    dataset_counts = {}
+    for dataset in datasets:
+        dataset_df = df[df['dataset'] == dataset]
+        counts = dataset_df['label'].value_counts().sort_index().to_dict()
+        dataset_counts[dataset] = counts
+
+    # Print statistics
+    print(f"\nTotal distribution (n={len(df)}):")
+    for label, count in sorted(total_counts.items()):
+        class_name = class_names.get(label, f"Class {label}")
+        pct = 100 * count / len(df)
+        print(f"  - {class_name} (label {label}): {count} ({pct:.1f}%)")
+
+    for dataset in datasets:
+        counts = dataset_counts[dataset]
+        dataset_total = sum(counts.values())
+        print(f"\n{dataset} distribution (n={dataset_total}):")
+        for label, count in sorted(counts.items()):
+            class_name = class_names.get(label, f"Class {label}")
+            pct = 100 * count / dataset_total
+            print(f"  - {class_name} (label {label}): {count} ({pct:.1f}%)")
+
+    # Create visualization
+    n_plots = len(datasets) + 1  # Total + per dataset
+    fig, axes = plt.subplots(1, n_plots, figsize=(5*n_plots, 5))
+    if n_plots == 1:
+        axes = [axes]
+
+    # Define colors for each class (consistent across all plots)
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']  # Blue, Orange, Green, Red
+    
+    def make_pie_chart(ax, counts, title, total):
+        """Helper to create a single pie chart."""
+        labels = []
+        sizes = []
+        chart_colors = []
+        
+        for label in sorted(counts.keys()):
+            count = counts[label]
+            class_name = class_names.get(label, f"Class {label}")
+            pct = 100 * count / total
+            labels.append(f"{pct:.1f}% ({count})")
+            sizes.append(count)
+            chart_colors.append(colors[label % len(colors)])
+        
+        wedges, texts, autotexts = ax.pie(
+            sizes, 
+            labels=labels,
+            colors=chart_colors,
+            autopct='',
+            startangle=90,
+            textprops={'fontsize': 10}
+        )
+        
+        ax.set_title(f"{title}\n(n={total})", fontsize=12, fontweight='bold')
+
+    # Plot 1: Total distribution
+    make_pie_chart(axes[0], total_counts, "Total", len(df))
+
+    # Plot 2+: Per dataset
+    for idx, dataset in enumerate(datasets):
+        dataset_total = sum(dataset_counts[dataset].values())
+        make_pie_chart(axes[idx+1], dataset_counts[dataset], dataset, dataset_total)
+
+    # Add legend
+    legend_elements = []
+    for label in sorted(set(df['label'])):
+        class_name = class_names.get(label, f"Class {label}")
+        legend_elements.append(
+            mpatches.Patch(color=colors[label % len(colors)], label=class_name)
+        )
+    
+    fig.legend(
+        handles=legend_elements,
+        loc='lower center',
+        ncol=len(legend_elements),
+        fontsize=11,
+        frameon=True
+    )
+
+    plt.suptitle("Class distribution: total and by dataset", fontsize=14, fontweight='bold', y=0.98)
+    plt.tight_layout(rect=[0, 0.05, 1, 0.96])
+
+    # Save plot
+    output_dir = config.paths.data_root
+    os.makedirs(os.path.join(output_dir, "dataset_plots"), exist_ok=True)
+    plot_path = os.path.join(output_dir, "dataset_plots", "class_distribution_by_dataset.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    print(f"\nSaved plot to: {plot_path}")
+    
+    # Also show if in interactive mode
+    plt.show()
+
+
+def run_plot_splits(config: DomainConfig) -> None:
+    """Create pie charts showing class distribution for train/val/test splits."""
+    print(f"\n{'='*60}")
+    print(f"Step: Plot Splits Distribution (4-class)")
+    print(f"{'='*60}")
+
+    # Check for splits directory
+    splits_dir = os.path.join(config.paths.data_root, "splits_4class")
+    if not os.path.exists(splits_dir):
+        print(f"Error: Splits directory not found: {splits_dir}")
+        print("Run 'splits' step first.")
+        return
+
+    # Load splits
+    split_files = {
+        'Train': os.path.join(splits_dir, "train_split.csv"),
+        'Val': os.path.join(splits_dir, "val_split.csv"),
+        'Test': os.path.join(splits_dir, "test_split.csv")
+    }
+
+    # Check all files exist
+    for split_name, filepath in split_files.items():
+        if not os.path.exists(filepath):
+            print(f"Error: Split file not found: {filepath}")
+            return
+
+    # Load data
+    splits_data = {}
+    for split_name, filepath in split_files.items():
+        df = pd.read_csv(filepath)
+        splits_data[split_name] = df
+        print(f"Loaded {split_name}: {len(df)} samples")
+
+    # Load class names from config
+    class_names = config.class_names
+
+    # Define colors for each class (consistent with dataset plot)
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']  # Blue, Orange, Green, Red
+    
+    # Create figure with 3 subplots (Train, Val, Test)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    def make_split_pie_chart(ax, df, title):
+        """Helper to create a single pie chart for a split."""
+        counts = df['label'].value_counts().sort_index().to_dict()
+        total = len(df)
+        
+        labels = []
+        sizes = []
+        chart_colors = []
+        
+        for label in sorted(counts.keys()):
+            count = counts[label]
+            pct = 100 * count / total
+            
+            # Create label text with percentage and count
+            labels.append(f"{pct:.1f}%\n({count})")
+            sizes.append(count)
+            chart_colors.append(colors[label % len(colors)])
+        
+        # Create pie chart
+        wedges, texts = ax.pie(
+            sizes, 
+            labels=labels,
+            colors=chart_colors,
+            startangle=90,
+            textprops={'fontsize': 9}
+        )
+        
+        # Add title with total count
+        ax.set_title(f"{title} (n={total})", fontsize=14, fontweight='bold')
+
+    # Plot each split
+    for idx, split_name in enumerate(['Train', 'Val', 'Test']):
+        make_split_pie_chart(axes[idx], splits_data[split_name], split_name)
+
+    # Add legend with class names
+    legend_elements = []
+    # Get all unique labels across all splits
+    all_labels = set()
+    for df in splits_data.values():
+        all_labels.update(df['label'].unique())
+    
+    for label in sorted(all_labels):
+        class_name = class_names.get(label, f"Class {label}")
+        legend_elements.append(
+            mpatches.Patch(color=colors[label % len(colors)], label=f"{label} ({class_name})")
+        )
+    
+    fig.legend(
+        handles=legend_elements,
+        loc='lower center',
+        ncol=len(legend_elements),
+        fontsize=11,
+        frameon=True
+    )
+
+    # Add overall title
+    plt.suptitle("4-class splits distribution", fontsize=16, fontweight='bold', y=0.98)
+    plt.tight_layout(rect=[0, 0.08, 1, 0.95])
+
+    # Save plot
+    output_dir = os.path.join(config.paths.data_root, "dataset_plots")
+    os.makedirs(output_dir, exist_ok=True)
+    plot_path = os.path.join(output_dir, "splits_4class_distribution.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    print(f"\nSaved plot to: {plot_path}")
+
+    # Print statistics
+    for split_name in ['Train', 'Val', 'Test']:
+        df = splits_data[split_name]
+        counts = df['label'].value_counts().sort_index().to_dict()
+        print(f"\n{split_name} distribution (n={len(df)}):")
+        for label in sorted(counts.keys()):
+            count = counts[label]
+            class_name = class_names.get(label, f"Class {label}")
+            pct = 100 * count / len(df)
+            print(f"  - {label} ({class_name}): {count} ({pct:.1f}%)")
+    
+    # Also show if in interactive mode
+    plt.show()
 
 
 def run_stats(config: DomainConfig) -> None:
@@ -159,10 +415,15 @@ def run_spectrograms(config: DomainConfig, windows: List[dict]) -> None:
     for win in windows:
         sound = sounds.get(win['sound_id'])
         if sound:
+            # Resolve audio file path relative to data_root
+            audio_path = sound['file_name_path']
+            if not os.path.isabs(audio_path):
+                audio_path = os.path.join(config.paths.data_root, audio_path)
+            
             inference_windows.append({
                 'window_id': win['window_id'],
                 'sound_id': win['sound_id'],
-                'sound_path': sound['file_name_path'],
+                'sound_path': audio_path,
                 'start': win['start'],
                 'end': win['end'],
                 'label': win.get('label'),
@@ -395,7 +656,7 @@ def main():
     parser.add_argument(
         "--steps", type=str, nargs="+",
         default=["stats", "windows", "spectrograms", "splits"],
-        choices=["stats", "windows", "spectrograms", "splits"],
+        choices=["stats", "plot", "windows", "spectrograms", "splits"],
         help="Steps to run (default: all)"
     )
 
@@ -411,6 +672,10 @@ def main():
     # Run requested steps
     if "stats" in args.steps:
         run_stats(config)
+
+    if "plot" in args.steps:
+        run_plot_distribution(config)
+        run_plot_splits(config)
 
     if "windows" in args.steps:
         windows = run_windows(config)

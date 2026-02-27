@@ -250,7 +250,7 @@ def main():
     parser.add_argument(
         "--annotations",
         type=str,
-        default="data/annotations_combined.json",
+        default="data/NOAA_Whales/annotations_combined.json",
         help="Path to annotations JSON",
     )
     parser.add_argument(

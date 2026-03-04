@@ -387,7 +387,8 @@ def run_windows(config: DomainConfig) -> List[dict]:
 def run_spectrograms(config: DomainConfig, windows: List[dict]) -> None:
     """Compute mel spectrograms using GPU."""
     # Import here to avoid loading torch unnecessarily
-    from inference import compute_mel_spectrograms_gpu
+    from PytorchWildlife.data.bioacoustics_spectrograms import compute_mel_spectrograms_gpu
+    from inference import resolve_spectrogram_path
 
     print(f"\n{'='*60}")
     print(f"Step: Compute Mel Spectrograms (GPU)")
@@ -429,6 +430,17 @@ def run_spectrograms(config: DomainConfig, windows: List[dict]) -> None:
                 'label': win.get('label'),
             })
 
+    def _legacy_spectrogram_path(win, spectrograms_path):
+        return resolve_spectrogram_path(
+            spectrograms_path,
+            sound_path=win.get("sound_path"),
+            start=int(win["start"]),
+            end=int(win["end"]),
+            sound_id=win.get("sound_id"),
+            window_id=win.get("window_id"),
+            label=win.get("label"),
+        )
+
     compute_mel_spectrograms_gpu(
         windows=inference_windows,
         sample_rate=config.audio.sample_rate,
@@ -441,6 +453,7 @@ def run_spectrograms(config: DomainConfig, windows: List[dict]) -> None:
         fill_highfreq=config.spectrogram.fill_highfreq,
         noise_db_std=config.spectrogram.noise_db_std,
         storage_dtype=config.spectrogram.storage_dtype,
+        spectrogram_path_fn=_legacy_spectrogram_path,
     )
 
     print("Spectrogram computation complete!")

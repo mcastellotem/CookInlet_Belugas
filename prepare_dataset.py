@@ -38,7 +38,7 @@ def run_plot_distribution(config: DomainConfig) -> None:
     print(f"{'='*60}")
 
     # Load windows
-    windows_path = os.path.join(config.paths.data_root, config.paths.windows_file)
+    windows_path = os.path.join(config.paths.data_root, config.paths.windows_json)
     if not os.path.exists(windows_path):
         print(f"Error: Windows file not found: {windows_path}")
         print("Run 'windows' step first.")
@@ -341,7 +341,7 @@ def run_windows(config: DomainConfig) -> List[dict]:
 
     windows_output_path = os.path.join(
         output_dir,
-        config.paths.windows_file,
+        config.paths.windows_json,
     )
 
     if os.path.exists(windows_output_path):
@@ -634,7 +634,7 @@ def load_windows_if_exists(config: DomainConfig) -> Optional[List[dict]]:
     output_dir = config.paths.data_root
     windows_output_path = os.path.join(
         output_dir,
-        config.paths.windows_file,
+        config.paths.windows_json,
     )
 
     if os.path.exists(windows_output_path):

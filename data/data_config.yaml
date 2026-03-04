@@ -16,7 +16,7 @@ paths:
   output_root: "./outputs"
   spectrograms_dir: "./data/mel_spectrograms_multiclass"
   annotations_file: "NOAA_Whales/annotations_combined.json"
-  windows_file: "NOAA_Whales/windows_multiclass.json"
+  windows_json: "NOAA_Whales/windows_multiclass.json"
 
 audio:
   sample_rate: 24000

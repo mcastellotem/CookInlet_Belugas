@@ -236,12 +236,12 @@ def compute_annotation_stats(annotations_path: str) -> tuple:
     Returns a tuple of:
         - stats: dict keyed by dataset name with duration statistics
         - durations: dict of all durations per dataset
-        - durations_by_location: nested dict of durations per dataset per location
-        - invalid_by_location: nested dict of invalid counts per dataset per location
+        - durations_by_project: nested dict of durations per dataset per project
+        - invalid_by_project: nested dict of invalid counts per dataset per project
         - invalid_annotations: list of invalid annotation dicts
         - freq_stats: dict keyed by dataset name with frequency statistics
         - frequencies: dict of frequency data per dataset
-        - frequencies_by_location: nested dict of frequencies per dataset per location
+        - frequencies_by_project: nested dict of frequencies per dataset per project
     """
     with open(annotations_path, "r") as f:
         data = json.load(f)
@@ -273,27 +273,27 @@ def compute_annotation_stats(annotations_path: str) -> tuple:
                 "startSeconds": ann["t_min"],
                 "sound_duration": sound_duration,
                 "sound_path": sound.get("file_name_path", ""),
-                "location": sound.get("location", ""),
+                "project": sound.get("project", ""),
             })
         durations[dataset].append(dur)
         f_mins[dataset].append(f_min)
         f_maxs[dataset].append(f_max)
         f_ranges[dataset].append(f_range)
 
-    # Collect per-location breakdowns
-    durations_by_location: dict[str, dict[str, list[float]]] = defaultdict(
+    # Collect per-project breakdowns
+    durations_by_project: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    f_mins_by_location: dict[str, dict[str, list[float]]] = defaultdict(
+    f_mins_by_project: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    f_maxs_by_location: dict[str, dict[str, list[float]]] = defaultdict(
+    f_maxs_by_project: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    f_ranges_by_location: dict[str, dict[str, list[float]]] = defaultdict(
+    f_ranges_by_project: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    invalid_by_location: dict[str, dict[str, int]] = defaultdict(
+    invalid_by_project: dict[str, dict[str, int]] = defaultdict(
         lambda: defaultdict(int)
     )
     
@@ -305,13 +305,13 @@ def compute_annotation_stats(annotations_path: str) -> tuple:
         f_max = ann["f_max"]
         f_range = f_max - f_min
         sound = sounds.get(ann["sound_id"], {})
-        location = sound.get("location", "Unknown")
-        durations_by_location[dataset][location].append(dur)
-        f_mins_by_location[dataset][location].append(f_min)
-        f_maxs_by_location[dataset][location].append(f_max)
-        f_ranges_by_location[dataset][location].append(f_range)
+        project = sound.get("project", "Unknown")
+        durations_by_project[dataset][project].append(dur)
+        f_mins_by_project[dataset][project].append(f_min)
+        f_maxs_by_project[dataset][project].append(f_max)
+        f_ranges_by_project[dataset][project].append(f_range)
         if ann["t_min"] > sound.get("duration", 0):
-            invalid_by_location[dataset][location] += 1
+            invalid_by_project[dataset][project] += 1
 
     stats = {}
     freq_stats = {}
@@ -356,20 +356,20 @@ def compute_annotation_stats(annotations_path: str) -> tuple:
             "frange_max": float(frange_arr.max()) if len(frange_arr) > 0 else 0.0,
         }
 
-    # Package frequency data for per-location analysis
+    # Package frequency data for per-project analysis
     frequencies = {
         "f_min": f_mins,
         "f_max": f_maxs,
         "f_range": f_ranges,
     }
-    frequencies_by_location = {
-        "f_min": f_mins_by_location,
-        "f_max": f_maxs_by_location,
-        "f_range": f_ranges_by_location,
+    frequencies_by_project = {
+        "f_min": f_mins_by_project,
+        "f_max": f_maxs_by_project,
+        "f_range": f_ranges_by_project,
     }
 
-    return (stats, durations, durations_by_location, invalid_by_location, 
-            invalid_annotations, freq_stats, frequencies, frequencies_by_location)
+    return (stats, durations, durations_by_project, invalid_by_project, 
+            invalid_annotations, freq_stats, frequencies, frequencies_by_project)
 
 
 def export_invalid_annotations(
@@ -393,7 +393,7 @@ def export_invalid_annotations(
     with open(output_path, "w", newline="") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["startSeconds", "durationSeconds", "sound_duration", "sound_path", "location"],
+            fieldnames=["startSeconds", "durationSeconds", "sound_duration", "sound_path", "project"],
         )
         writer.writeheader()
         for ann in invalid_annotations:
@@ -411,15 +411,15 @@ def export_invalid_annotations(
                 "durationSeconds": duration_seconds,
                 "sound_duration": ann["sound_duration"],
                 "sound_path": ann["sound_path"],
-                "location": ann.get("location", ""),
+                "project": ann.get("project", ""),
             })
     print(f"\nExported {len(invalid_annotations)} invalid annotations to {output_path}")
 
 
 def print_stats(
-    stats: dict, durations: dict, durations_by_location: dict,
-    invalid_by_location: dict, freq_stats: dict, frequencies: dict,
-    frequencies_by_location: dict,
+    stats: dict, durations: dict, durations_by_project: dict,
+    invalid_by_project: dict, freq_stats: dict, frequencies: dict,
+    frequencies_by_project: dict,
 ) -> None:
     """Pretty-print the duration and frequency statistics."""
 
@@ -441,7 +441,7 @@ def print_stats(
                     f"   {dataset}: {s['invalid_count']} invalid annotations "
                     f"(t_min > sound_duration)"
                 )
-                for loc, cnt in sorted(invalid_by_location.get(dataset, {}).items()):
+                for loc, cnt in sorted(invalid_by_project.get(dataset, {}).items()):
                     print(f"     - {loc}: {cnt}")
         print()
 
@@ -485,10 +485,10 @@ def print_stats(
     )
     print("=" * len(header))
 
-    # Per-location breakdown
-    for dataset in sorted(durations_by_location.keys()):
-        locations = durations_by_location[dataset]
-        print(f"\n--- {dataset} by location ---")
+    # Per-project breakdown
+    for dataset in sorted(durations_by_project.keys()):
+        locations = durations_by_project[dataset]
+        print(f"\n--- {dataset} by project ---")
         loc_header = (
             f"  {'Location':<25} {'Count':>7} {'Valid':>7} "
             f"{'Total(s)':>10} {'Mean(s)':>8} {'Median(s)':>9}"
@@ -580,12 +580,12 @@ def print_stats(
     )
     print("=" * len(freq_detail_header))
 
-    # Per-location frequency breakdown
-    for dataset in sorted(frequencies_by_location["f_min"].keys()):
-        f_min_locs = frequencies_by_location["f_min"][dataset]
-        f_max_locs = frequencies_by_location["f_max"][dataset]
-        f_range_locs = frequencies_by_location["f_range"][dataset]
-        print(f"\n--- {dataset} frequency by location ---")
+    # Per-project frequency breakdown
+    for dataset in sorted(frequencies_by_project["f_min"].keys()):
+        f_min_locs = frequencies_by_project["f_min"][dataset]
+        f_max_locs = frequencies_by_project["f_max"][dataset]
+        f_range_locs = frequencies_by_project["f_range"][dataset]
+        print(f"\n--- {dataset} frequency by project ---")
         loc_freq_header = (
             f"  {'Location':<25} {'Count':>7} "
             f"{'fmin_mean':>10} {'fmax_mean':>10} {'range_mean':>11}"
@@ -664,12 +664,12 @@ Examples:
     
     elif args.mode == "stats":
         print("\n📊 Running detailed statistics analysis...\n")
-        (stats, durations, durations_by_location, invalid_by_location, invalid_annotations,
-         freq_stats, frequencies, frequencies_by_location) = (
+        (stats, durations, durations_by_project, invalid_by_project, invalid_annotations,
+         freq_stats, frequencies, frequencies_by_project) = (
             compute_annotation_stats(args.annotations)
         )
-        print_stats(stats, durations, durations_by_location, invalid_by_location,
-                   freq_stats, frequencies, frequencies_by_location)
+        print_stats(stats, durations, durations_by_project, invalid_by_project,
+                   freq_stats, frequencies, frequencies_by_project)
         
         if invalid_annotations:
             export_invalid_annotations(

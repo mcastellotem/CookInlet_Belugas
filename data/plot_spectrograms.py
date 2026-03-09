@@ -5,14 +5,14 @@ Usage:
     # By sound_id:
     python plot_spectrograms.py --sound-id 434
 
-    # By location (plots first sound with annotations):
-    python plot_spectrograms.py --location 201D
+    # By project (plots first sound with annotations):
+    python plot_spectrograms.py --project 201D
 
     # Limit number of windows plotted:
     python plot_spectrograms.py --sound-id 434 --max-windows 12
 
     # Custom output path:
-    python plot_spectrograms.py --location 201D -o my_plot.png
+    python plot_spectrograms.py --project 201D -o my_plot.png
 """
 
 import argparse
@@ -46,14 +46,14 @@ def load_data(annotations_path: str, windows_path: str):
     return data, windows, sounds
 
 
-def find_sound(sounds: dict, data: dict, sound_id=None, location=None):
+def find_sound(sounds: dict, data: dict, sound_id=None, project=None):
     """Return a single sound dict matching the criteria."""
     if sound_id is not None:
         if sound_id not in sounds:
             raise ValueError(f"sound_id {sound_id} not found")
         return sounds[sound_id]
 
-    # Find first sound at location that has valid annotations
+    # Find first sound at project that has valid annotations
     from collections import Counter
 
     anno_counts = Counter()
@@ -63,10 +63,10 @@ def find_sound(sounds: dict, data: dict, sound_id=None, location=None):
 
     candidates = [
         s for s in data["sounds"]
-        if s.get("location") == location and anno_counts.get(s["id"], 0) > 0
+        if s.get("project") == project and anno_counts.get(s["id"], 0) > 0
     ]
     if not candidates:
-        raise ValueError(f"No sounds with annotations found at location '{location}'")
+        raise ValueError(f"No sounds with annotations found at project '{project}'")
     # Pick the one with the most annotations
     candidates.sort(key=lambda s: anno_counts.get(s["id"], 0), reverse=True)
     return candidates[0]
@@ -108,7 +108,7 @@ def plot_spectrograms(
 ):
     """Plot a grid of spectrograms with annotation bounding boxes."""
     sid = sound["id"]
-    location = sound.get("location", "?")
+    project = sound.get("project", "?")
     filename = sound["file_name_path"].split("/")[-1]
 
     if max_windows:
@@ -219,7 +219,7 @@ def plot_spectrograms(
         )
 
     fig.suptitle(
-        f"Sound {sid} ({location}) — {n} windows with annotations\n"
+        f"Sound {sid} ({project}) — {n} windows with annotations\n"
         f"File: {filename}",
         fontsize=11,
         fontweight="bold",
@@ -243,7 +243,7 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--sound-id", type=int, help="Sound ID to plot")
     group.add_argument(
-        "--location",
+        "--project",
         type=str,
         help="Location code (e.g. 201D). Picks the sound with most annotations.",
     )
@@ -288,13 +288,13 @@ def main():
     data, windows, sounds = load_data(args.annotations, args.windows)
 
     sound = find_sound(
-        sounds, data, sound_id=args.sound_id, location=args.location
+        sounds, data, sound_id=args.sound_id, project=args.project
     )
     sid = sound["id"]
-    loc = sound.get("location", "?")
+    proj = sound.get("project", "?")
 
     print(
-        f"Sound {sid} | location={loc} | "
+        f"Sound {sid} | project={proj} | "
         f"file={sound['file_name_path'].split('/')[-1]} | "
         f"duration={sound['duration']:.1f}s"
     )
@@ -302,7 +302,7 @@ def main():
     overlapping = get_overlapping_windows(sound, windows, data["annotations"])
     print(f"Found {len(overlapping)} windows overlapping annotations")
 
-    output = args.output or f"data/spectrograms_visualizations/spectrograms_sid{sid}_{loc}.png"
+    output = args.output or f"data/spectrograms_visualizations/spectrograms_sid{sid}_{proj}.png"
     plot_spectrograms(
         overlapping, sound, args.spec_dir, output,
         max_windows=args.max_windows, ncols=args.ncols,

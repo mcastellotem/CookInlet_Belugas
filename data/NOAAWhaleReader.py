@@ -50,7 +50,7 @@ class WhaleSpeciesReader(BaseReader):
                         sample_rate=sample_rate,
                         latitude=None,
                         longitude=None,
-                        location=row['location']
+                        project=row['location']
                     )
                     next_id += 1
 

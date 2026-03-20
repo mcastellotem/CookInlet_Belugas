@@ -17,6 +17,7 @@ Reads the ``test_split_with_predictions.csv`` files that are already
 saved in each checkpoint subfolder, so no model loading or GPU is needed.
 
 Usage:
+    # Cascade comparison (default)
     python compare_models.py
 
     # Custom prediction CSV paths
@@ -24,6 +25,12 @@ Usage:
         --pred_binary  checkpoints/binary/test_split_with_predictions.csv \\
         --pred_3class  checkpoints/3class/test_split_with_predictions.csv \\
         --pred_4class  checkpoints/4class/test_split_with_predictions.csv
+
+    # Compare experiments (same model, different runs)
+    python compare_models.py \\
+        --compare  checkpoints/binary/test_split_with_predictions_old.csv \\
+                   checkpoints/binary/test_split_with_predictions_new.csv \\
+        --names old new
 
     # Save results to CSV
     python compare_models.py --output comparison_results.csv
@@ -223,12 +230,96 @@ def print_comparison(df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Experiment comparison (same model, different runs)
+# ---------------------------------------------------------------------------
+def compare_experiments(csv_paths: list[str], exp_names: list[str],
+                        output: str | None = None) -> None:
+    """Compare multiple prediction CSVs from the same model type.
+
+    Each CSV must have ``label`` and ``prediction`` columns.  Class names
+    are inferred from the union of label values across all CSVs.
+    """
+    dfs = []
+    for path, name in zip(csv_paths, exp_names):
+        df = pd.read_csv(path)
+        print(f"  {name}: {len(df):,} rows  ({path})")
+        dfs.append(df)
+
+    all_labels = sorted(set().union(*(df["label"].unique() for df in dfs)))
+    n_classes = len(all_labels)
+
+    all_metrics = {}
+    for df, name in zip(dfs, exp_names):
+        p, r, f1, sup = precision_recall_fscore_support(
+            df["label"].values, df["prediction"].values,
+            labels=all_labels, average=None, zero_division=0,
+        )
+        all_metrics[name] = dict(precision=p, recall=r, f1=f1, support=sup)
+
+    # Build results DataFrame
+    rows = []
+    for i, cls in enumerate(all_labels):
+        row = {"Class": cls}
+        for metric in ("precision", "recall", "f1", "support"):
+            for name in exp_names:
+                col = f"{metric.capitalize()} {name}"
+                row[col] = all_metrics[name][metric][i]
+        rows.append(row)
+    result_df = pd.DataFrame(rows)
+
+    # Pretty-print
+    _print_experiment_table(result_df, exp_names, all_labels)
+
+    if output:
+        result_df.to_csv(output, index=False, float_format="%.4f")
+        print(f"\nResults saved to {output}")
+
+
+def _print_experiment_table(df: pd.DataFrame, exp_names: list[str],
+                            class_labels: list) -> None:
+    """Pretty-print experiment comparison table."""
+    metrics = ("Precision", "Recall", "F1")
+    cls_w = max(max(len(str(c)) for c in class_labels), 5) + 2
+    val_w = max(max(len(n) for n in exp_names) + 2, 10)
+
+    sep_line = "+" + "-" * cls_w
+    for _ in metrics:
+        sep_line += "+" + ("-" * val_w + "+") * len(exp_names)
+    sep_line = sep_line.rstrip("+") + "+"
+
+    print(sep_line)
+
+    header = "|" + " " * cls_w
+    for m in metrics:
+        span = val_w * len(exp_names) + (len(exp_names) - 1)
+        header += "|" + m.center(span)
+    print(header + "|")
+
+    print(sep_line)
+    sub = "|" + "Class".center(cls_w)
+    for _ in metrics:
+        for name in exp_names:
+            sub += "|" + name.center(val_w)
+    print(sub + "|")
+    print(sep_line)
+
+    for _, row in df.iterrows():
+        parts = ["|" + str(row["Class"]).center(cls_w)]
+        for m in metrics:
+            for name in exp_names:
+                col = f"{m} {name}"
+                parts.append(f"{row[col]:.4f}".center(val_w))
+        print("|".join(parts) + "|")
+        print(sep_line)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare 4-Class / Binary+3-Class / Binary+4-Class "
-                    "approaches using saved prediction CSVs.",
+        description="Compare model approaches or experiments using saved "
+                    "prediction CSVs.",
     )
     parser.add_argument(
         "--pred_binary",
@@ -249,6 +340,22 @@ def main():
         help="4-class model predictions CSV.",
     )
     parser.add_argument(
+        "--compare",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Two or more prediction CSVs to compare as experiments "
+             "(same model, different runs).  When provided, the cascade "
+             "comparison is skipped.",
+    )
+    parser.add_argument(
+        "--names",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Display names for --compare CSVs (must match length).",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -256,39 +363,45 @@ def main():
     )
     args = parser.parse_args()
 
-    # ------------------------------------------------------------------
-    # Load & merge prediction CSVs
-    # ------------------------------------------------------------------
-    print("Loading prediction CSVs …")
-    merged = load_and_merge(args.pred_binary, args.pred_3class, args.pred_4class)
+    if args.compare:
+        # -- Experiment comparison mode --
+        if args.names:
+            if len(args.names) != len(args.compare):
+                parser.error("--names must have the same number of entries "
+                             "as --compare")
+            exp_names = args.names
+        else:
+            import os
+            exp_names = [os.path.basename(p) for p in args.compare]
 
-    labels = merged["label_4class"].values
+        print("Comparing experiments …")
+        compare_experiments(args.compare, exp_names, output=args.output)
+    else:
+        # -- Cascade comparison mode (original) --
+        print("Loading prediction CSVs …")
+        merged = load_and_merge(
+            args.pred_binary, args.pred_3class, args.pred_4class,
+        )
 
-    # ------------------------------------------------------------------
-    # Build per-approach predictions in the 4-class label space
-    # ------------------------------------------------------------------
-    all_preds = {
-        "4-Class": merged["pred_4class"].values,
-        "Binary+3-Class": cascade_binary_3class(merged),
-        "Binary+4-Class": cascade_binary_4class(merged),
-    }
+        labels = merged["label_4class"].values
 
-    # ------------------------------------------------------------------
-    # Compute & display metrics
-    # ------------------------------------------------------------------
-    all_metrics = {
-        name: compute_metrics(labels, preds) for name, preds in all_preds.items()
-    }
+        all_preds = {
+            "4-Class": merged["pred_4class"].values,
+            "Binary+3-Class": cascade_binary_3class(merged),
+            "Binary+4-Class": cascade_binary_4class(merged),
+        }
 
-    comparison_df = build_comparison_df(all_metrics)
-    print_comparison(comparison_df)
+        all_metrics = {
+            name: compute_metrics(labels, preds)
+            for name, preds in all_preds.items()
+        }
 
-    # ------------------------------------------------------------------
-    # Optionally save to CSV
-    # ------------------------------------------------------------------
-    if args.output:
-        comparison_df.to_csv(args.output, index=False, float_format="%.4f")
-        print(f"\nResults saved to {args.output}")
+        comparison_df = build_comparison_df(all_metrics)
+        print_comparison(comparison_df)
+
+        if args.output:
+            comparison_df.to_csv(args.output, index=False, float_format="%.4f")
+            print(f"\nResults saved to {args.output}")
 
 
 if __name__ == "__main__":

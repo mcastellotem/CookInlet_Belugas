@@ -63,7 +63,7 @@ class DataModuleConfig:
     """Configuration for the SpectrogramDataModule."""
     train_csv: Optional[str]
     val_csv: Optional[str]
-    test_csv: str
+    test_csv: Optional[str]
     spectrograms_root: str
     x_col: str
     y_col: str
@@ -154,20 +154,25 @@ class SpectrogramDataModule(pl.LightningDataModule):
                 is_training=False,
                 **dataset_kwargs
             )
-        self.test_ds = BioacousticsDataset(
-            csv_path=self.cfg.test_csv,
-            transform=self.eval_transform,
-            is_training=False,
-            **dataset_kwargs
-        )
+        if self.cfg.test_csv is not None:
+            self.test_ds = BioacousticsDataset(
+                csv_path=self.cfg.test_csv,
+                transform=self.eval_transform,
+                is_training=False,
+                **dataset_kwargs
+            )
+
+    @property
+    def _reference_ds(self):
+        return self.train_ds or self.val_ds or self.test_ds
 
     @property
     def num_classes(self) -> int:
-        return self.test_ds.num_classes
+        return self._reference_ds.num_classes
 
     @property
     def in_channels(self) -> int:
-        x0, _, _ = self.test_ds[0]
+        x0, _, _ = self._reference_ds[0]
         return x0.shape[0]
 
     @property
@@ -305,12 +310,15 @@ def train(cfg, train_csv, val_csv, test_csv, ckpt_path=None, finetune=False,
 
     if ckpt_path is None:
         trainer.fit(model, datamodule=dm)
-        model.test_csv_path = test_csv
-        model.predictions_dir = ckpt_dir
-        model.predict_only = predict_only
-        test_results = trainer.test(model, datamodule=dm, ckpt_path="best")
         print(f"Best ckpt: {ckpt_cb.best_model_path}")
         print(f"Best score: {ckpt_cb.best_model_score}")
+        if test_csv is not None:
+            model.test_csv_path = test_csv
+            model.predictions_dir = ckpt_dir
+            model.predict_only = predict_only
+            test_results = trainer.test(model, datamodule=dm, ckpt_path="best")
+        else:
+            test_results = []
     else:
         model = ResNetClassifier.load_from_checkpoint(ckpt_path)
 
@@ -335,14 +343,19 @@ def train(cfg, train_csv, val_csv, test_csv, ckpt_path=None, finetune=False,
             model._apply_freezing_strategy()
 
             trainer.fit(model, datamodule=dm)
-            model.test_csv_path = test_csv
-            model.predictions_dir = ckpt_dir
-            model.predict_only = predict_only
-            test_results = trainer.test(model, datamodule=dm, ckpt_path='best')
             print("Finetune completed.")
             print(f"Best ckpt: {ckpt_cb.best_model_path}")
             print(f"Best score: {ckpt_cb.best_model_score}")
+            if test_csv is not None:
+                model.test_csv_path = test_csv
+                model.predictions_dir = ckpt_dir
+                model.predict_only = predict_only
+                test_results = trainer.test(model, datamodule=dm, ckpt_path='best')
+            else:
+                test_results = []
         else:
+            if test_csv is None:
+                raise ValueError("--test_csv is required when evaluating from a checkpoint without --finetune")
             model.test_csv_path = test_csv
             model.predictions_dir = ckpt_dir
             model.predict_only = predict_only
@@ -365,8 +378,8 @@ def main():
                         help="Path to training split CSV")
     parser.add_argument("--val_csv", type=str, default=None,
                         help="Path to validation split CSV")
-    parser.add_argument("--test_csv", type=str, required=True,
-                        help="Path to test split CSV")
+    parser.add_argument("--test_csv", type=str, default=None,
+                        help="Path to test split CSV (optional; if omitted, testing is skipped)")
     parser.add_argument("--ckpt_path", type=str, default=None,
                         help="Checkpoint to resume/evaluate from")
     parser.add_argument("--finetune", action="store_true",
@@ -378,7 +391,11 @@ def main():
 
     args = parser.parse_args()
 
-    cfg = load_config(args.config)
+    CONFIGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs")
+    config_path = args.config
+    if not os.path.isabs(config_path) and not os.path.exists(config_path):
+        config_path = os.path.join(CONFIGS_DIR, config_path)
+    cfg = load_config(config_path)
 
     train(
         cfg=cfg,

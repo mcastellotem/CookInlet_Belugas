@@ -22,9 +22,10 @@ Usage:
 
     # Custom prediction CSV paths
     python compare_models.py \\
-        --pred_binary  checkpoints/binary/test_split_with_predictions.csv \\
-        --pred_3class  checkpoints/3class/test_split_with_predictions.csv \\
-        --pred_4class  checkpoints/4class/test_split_with_predictions.csv
+        --pred_binary        checkpoints/binary/test_split_with_predictions.csv \\
+        --pred_3class        checkpoints/3class/test_split_with_predictions.csv \\
+        --pred_4class        checkpoints/4class/test_split_with_predictions.csv \\
+        --pred_4class_2stage checkpoints/4class/test_split_with_predictions.csv
 
     # Compare experiments (same model, different runs)
     python compare_models.py \\
@@ -53,8 +54,9 @@ def load_and_merge(
     pred_binary: str,
     pred_3class: str,
     pred_4class: str,
+    pred_4class_2stage: str,
 ) -> pd.DataFrame:
-    """Load the three prediction CSVs and merge them on ``spec_name``.
+    """Load the four prediction CSVs and merge them on ``spec_name``.
 
     The 4-class CSV is used as the base (left joins) so that every
     sample — including No Whale — is preserved.
@@ -65,18 +67,21 @@ def load_and_merge(
     silently defaulting to No Whale.
 
     Returns a DataFrame with columns:
-        label_4class      – ground-truth in the 4-class label space
-        pred_binary       – binary prediction (0 = No Whale, 1 = Whale)
-        pred_3class       – 3-class prediction (0 = Humpback, 1 = Orca, 2 = Beluga)
-        pred_4class       – 4-class prediction (0-3)
+        label_4class       – ground-truth in the 4-class label space
+        pred_binary        – binary prediction (0 = No Whale, 1 = Whale)
+        pred_3class        – 3-class prediction (0 = Humpback, 1 = Orca, 2 = Beluga)
+        pred_4class        – 4-class prediction (0-3)
+        pred_4class_2stage – 4-class prediction used in the Binary+4-Class cascade
     """
     df_bin = pd.read_csv(pred_binary)
     df_3c = pd.read_csv(pred_3class)
     df_4c = pd.read_csv(pred_4class)
+    df_4c_2s = pd.read_csv(pred_4class_2stage)
 
-    print(f"  Loaded binary  predictions: {len(df_bin):,} rows")
-    print(f"  Loaded 3-class predictions: {len(df_3c):,} rows")
-    print(f"  Loaded 4-class predictions: {len(df_4c):,} rows")
+    print(f"  Loaded binary         predictions: {len(df_bin):,} rows")
+    print(f"  Loaded 3-class        predictions: {len(df_3c):,} rows")
+    print(f"  Loaded 4-class        predictions: {len(df_4c):,} rows")
+    print(f"  Loaded 4-class 2stage predictions: {len(df_4c_2s):,} rows")
 
     merged = (
         df_4c[["spec_name", "label", "prediction"]]
@@ -91,10 +96,16 @@ def load_and_merge(
             on="spec_name",
             how="left",
         )
+        .merge(
+            df_4c_2s[["spec_name", "prediction"]].rename(columns={"prediction": "pred_4class_2stage"}),
+            on="spec_name",
+            how="left",
+        )
     )
 
     merged["pred_binary"] = merged["pred_binary"].fillna(0).astype(int)
     merged["pred_3class"] = merged["pred_3class"].fillna(-1).astype(int)
+    merged["pred_4class_2stage"] = merged["pred_4class_2stage"].fillna(0).astype(int)
 
     n_missing_3c = (merged["pred_3class"] == -1).sum()
     if n_missing_3c:
@@ -135,7 +146,7 @@ def cascade_binary_4class(df: pd.DataFrame) -> np.ndarray:
     """
     final = np.zeros(len(df), dtype=int)
     is_whale = df["pred_binary"].values == 1
-    final[is_whale] = df.loc[is_whale, "pred_4class"].values
+    final[is_whale] = df.loc[is_whale, "pred_4class_2stage"].values
     return final
 
 
@@ -337,7 +348,13 @@ def main():
         "--pred_4class",
         type=str,
         default="checkpoints/4class/test_split_with_predictions.csv",
-        help="4-class model predictions CSV.",
+        help="4-class model predictions CSV (used for the standalone 4-class column).",
+    )
+    parser.add_argument(
+        "--pred_4class_2stage",
+        type=str,
+        default="checkpoints/4class/test_split_with_predictions.csv",
+        help="4-class model predictions CSV used for the Binary+4-Class cascade.",
     )
     parser.add_argument(
         "--compare",
@@ -381,6 +398,7 @@ def main():
         print("Loading prediction CSVs …")
         merged = load_and_merge(
             args.pred_binary, args.pred_3class, args.pred_4class,
+            args.pred_4class_2stage,
         )
 
         labels = merged["label_4class"].values

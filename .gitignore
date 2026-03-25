@@ -7,3 +7,4 @@ configs/
 data/invalid_duration_annotations.csv
 data/new_splits/
 data/splits_multiclass_corrected/
+data/tuxedni_splits/

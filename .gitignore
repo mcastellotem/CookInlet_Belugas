@@ -5,6 +5,7 @@ data/dataset_plots/
 checkpoints/
 configs/
 data/invalid_duration_annotations.csv
-data/new_splits/
+data/base_splits/
 data/splits_multiclass_corrected/
 data/tuxedni_splits/
+CLAUDE.md
